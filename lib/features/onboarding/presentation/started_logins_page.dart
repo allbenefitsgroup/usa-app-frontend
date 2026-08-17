@@ -1,0 +1,1504 @@
+import 'package:all_benefits_group/app/theme/app_theme.dart';
+import 'package:all_benefits_group/features/auth/data/auth_service.dart';
+import 'package:all_benefits_group/features/auth/data/biometric_auth_service.dart';
+
+import 'package:all_benefits_group/features/dashboard/presentation/user_home_page.dart';
+import 'package:all_benefits_group/features/dashboard/presentation/student_home_page.dart';
+import 'package:all_benefits_group/features/vendor/presentation/vendor_dashboard_page.dart';
+import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:permission_handler/permission_handler.dart';
+
+class StartedLoginsPage extends StatefulWidget {
+  final bool skipQuestions;
+
+  const StartedLoginsPage({super.key, this.skipQuestions = false});
+
+  @override
+  State<StartedLoginsPage> createState() => _StartedLoginsPageState();
+}
+
+class _StartedLoginsPageState extends State<StartedLoginsPage> {
+  static const int _loginStep = 3;
+  static const List<Map<String, Object>> _questions = [];
+
+  String _selectedRole = 'customer';
+  bool _showSignIn = true;
+  bool _obscurePassword = true;
+  bool _isLoading = false;
+  bool _rememberMe = false;
+  bool _canCheckBiometrics = false;
+  bool _hasSavedCredentials = false;
+  String _biometricLabel = 'Biometría';
+  late int _currentQuestion;
+
+  final FocusNode _emailFocusNode = FocusNode();
+
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _phoneController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _currentQuestion = widget.skipQuestions || _questions.isEmpty
+        ? _loginStep
+        : 0;
+    _emailFocusNode.addListener(() {
+      setState(() {});
+    });
+    _loadSavedCredentials();
+  }
+
+  Future<void> _loadSavedCredentials() async {
+    final savedEmail = await BiometricAuthService.getSavedEmail();
+    final savedPassword = await BiometricAuthService.getSavedPassword();
+    final hasCreds = await BiometricAuthService.hasSavedCredentials();
+    final canBio = await BiometricAuthService.canCheckBiometrics();
+    final label = await BiometricAuthService.getBiometricLabel();
+    final quickStart = await BiometricAuthService.isQuickStartEnabled();
+
+    if (!mounted) return;
+
+    setState(() {
+      if (savedEmail != null && savedEmail.isNotEmpty) {
+        _emailController.text = savedEmail;
+      }
+      if (savedPassword != null && savedPassword.isNotEmpty) {
+        _passwordController.text = savedPassword;
+      }
+      _hasSavedCredentials = hasCreds;
+      _canCheckBiometrics = canBio;
+      _biometricLabel = label;
+      _rememberMe = quickStart;
+    });
+
+    debugPrint('🔐 initState: hasSavedCredentials=$hasCreds, canBiometrics=$canBio, label=$label, quickStart=$quickStart');
+
+    // Fallback: si no hay biometría pero hay token → auto-navegar (caso 3)
+    if (hasCreds && !canBio) {
+      final isLoggedIn = await AuthService.isLoggedIn();
+      if (isLoggedIn && mounted) {
+        debugPrint('🟢 [Login] Sin biometría pero hay token, auto-navegando...');
+        final role = await AuthService.getBackendRole() ?? 'client';
+        final user = await AuthService.getUser();
+        final userName = (user?['name'] as String?) ?? 'Usuario';
+
+        if (!mounted) return;
+
+        if (role == 'seller') {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const VendorDashboardPage()),
+          );
+        } else if (role == 'student') {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder: (_) => StudentHomePage(userName: userName),
+            ),
+          );
+        } else {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder: (_) => UserHomePage(userName: userName),
+            ),
+          );
+        }
+        return;
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    _nameController.dispose();
+    _phoneController.dispose();
+    _emailFocusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _currentQuestion < _questions.length
+        ? _buildOnboarding(context)
+        : _buildLoginForm(context);
+  }
+
+  Widget _buildOnboarding(BuildContext context) {
+    final questions = _questions;
+
+    if (questions.isEmpty || _currentQuestion >= questions.length) {
+      return _buildLoginForm(context);
+    }
+
+    final currentQ = questions[_currentQuestion];
+
+    return Scaffold(
+      backgroundColor: AppTheme.paper,
+      body: SafeArea(
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Text(
+                  currentQ['emoji'] as String,
+                  style: const TextStyle(fontSize: 56),
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  currentQ['question'] as String,
+                  style: GoogleFonts.fredoka(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                    color: AppTheme.fg,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 32),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _buildOptionButton(
+                      currentQ['option1'] as String,
+                      () => _answerQuestion(0),
+                    ),
+                    const SizedBox(width: 16),
+                    _buildOptionButton(
+                      currentQ['option2'] as String,
+                      () => _answerQuestion(1),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOptionButton(String label, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+        decoration: BoxDecoration(
+          color: AppTheme.accent,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(
+          label,
+          style: GoogleFonts.fredoka(
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            color: AppTheme.paper,
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _answerQuestion(int optionIndex) {
+    setState(() {
+      _currentQuestion++;
+    });
+  }
+
+  /// Transforma mensajes de error crudos del backend en mensajes amigables para el usuario.
+  String _friendlyErrorMessage(Object error) {
+    final raw = error.toString().toLowerCase();
+
+    if (raw.contains('invalid credentials') ||
+        raw.contains('invalid email or password') ||
+        raw.contains('unauthorized') ||
+        raw.contains('unauthenticated') ||
+        raw.contains('401')) {
+      return 'Credenciales incorrectas, intente nuevamente';
+    }
+
+    if (raw.contains('user not found') || raw.contains('usuario no encontrado')) {
+      return 'No encontramos una cuenta con ese email. ¿Querés registrarte?';
+    }
+
+    if (raw.contains('email already exists') ||
+        raw.contains('ya existe') ||
+        raw.contains('duplicate')) {
+      return 'Ya existe una cuenta con ese email. Probá iniciar sesión o usá otro correo.';
+    }
+
+    if (raw.contains('network') ||
+        raw.contains('socket') ||
+        raw.contains('connection') ||
+        raw.contains('timeout')) {
+      return 'Problema de conexión. Revisá tu internet e intentá de nuevo.';
+    }
+
+    if (raw.contains('server') || raw.contains('500') || raw.contains('503')) {
+      return 'El servidor no respondió. Intentá más tarde.';
+    }
+
+    // Si no reconocemos el error, mostramos un mensaje genérico amigable
+    // en lugar del texto crudo del backend.
+    return 'Algo salió mal. Intentá de nuevo en unos segundos.';
+  }
+
+  void _showErrorSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.white, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                message,
+                style: GoogleFonts.nunito(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                  height: 1.4,
+                ),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: const Color(0xFFE53935),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        duration: const Duration(seconds: 4),
+        elevation: 6,
+      ),
+    );
+  }
+
+  Widget _buildLoginForm(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppTheme.paper,
+      body: SafeArea(
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                const SizedBox(height: 16),
+                Container(
+                  width: 120,
+                  height: 120,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: AppTheme.accent, width: 6),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppTheme.accent.withValues(alpha: 0.3),
+                        blurRadius: 15,
+                        spreadRadius: 2,
+                      ),
+                    ],
+                  ),
+                  child: ClipOval(
+                    child: Image.asset(
+                      'assets/images/bebe/bebe-hello.png',
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Bienvenido a USA All Benefits Group',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.fredoka(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                    color: AppTheme.fg,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () {
+                          _emailFocusNode.unfocus();
+                          setState(() => _showSignIn = true);
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          decoration: BoxDecoration(
+                            color: _showSignIn
+                                ? AppTheme.accent
+                                : AppTheme.paper,
+                            border: Border.all(
+                              color: AppTheme.accent,
+                              width: 2,
+                            ),
+                            borderRadius: const BorderRadius.only(
+                              topLeft: Radius.circular(12),
+                              bottomLeft: Radius.circular(12),
+                            ),
+                          ),
+                          child: Text(
+                            'Iniciar sesión',
+                            textAlign: TextAlign.center,
+                            style: GoogleFonts.fredoka(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w900,
+                              color: _showSignIn
+                                  ? AppTheme.paper
+                                  : AppTheme.muted,
+                              letterSpacing: 0.05,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () {
+                          _emailFocusNode.unfocus();
+                          setState(() => _showSignIn = false);
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          decoration: BoxDecoration(
+                            color: !_showSignIn
+                                ? AppTheme.accent
+                                : AppTheme.paper,
+                            border: Border.all(
+                              color: AppTheme.accent,
+                              width: 2,
+                            ),
+                            borderRadius: const BorderRadius.only(
+                              topRight: Radius.circular(12),
+                              bottomRight: Radius.circular(12),
+                            ),
+                          ),
+                          child: Text(
+                            'Registrarse',
+                            textAlign: TextAlign.center,
+                            style: GoogleFonts.fredoka(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w900,
+                              color: !_showSignIn
+                                  ? AppTheme.paper
+                                  : AppTheme.muted,
+                              letterSpacing: 0.05,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                if (_showSignIn) _buildSignInForm() else _buildSignUpForm(),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSignInForm() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 16),
+        Text(
+          'Email',
+          style: GoogleFonts.nunito(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: AppTheme.fg,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: _emailFocusNode.hasFocus ? AppTheme.accent : AppTheme.line,
+              width: 2,
+            ),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: TextField(
+            controller: _emailController,
+            focusNode: _emailFocusNode,
+            keyboardType: TextInputType.emailAddress,
+            style: GoogleFonts.nunito(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: AppTheme.fg,
+            ),
+            decoration: InputDecoration(
+              hintText: 'tú@ejemplo.com',
+              hintStyle: GoogleFonts.nunito(
+                fontSize: 13,
+                fontWeight: FontWeight.w400,
+                color: AppTheme.muted,
+              ),
+              border: InputBorder.none,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 12,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        Text(
+          'Contraseña',
+          style: GoogleFonts.nunito(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: AppTheme.fg,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            border: Border.all(color: AppTheme.line, width: 1),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: TextField(
+            controller: _passwordController,
+            obscureText: _obscurePassword,
+            style: GoogleFonts.nunito(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: AppTheme.fg,
+            ),
+            decoration: InputDecoration(
+              hintText: '••••••••',
+              hintStyle: GoogleFonts.nunito(
+                fontSize: 13,
+                fontWeight: FontWeight.w400,
+                color: AppTheme.muted,
+              ),
+              border: InputBorder.none,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 12,
+              ),
+              suffixIcon: IconButton(
+                icon: Icon(
+                  _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                  color: AppTheme.muted,
+                  size: 20,
+                ),
+                onPressed: () {
+                  setState(() {
+                    _obscurePassword = !_obscurePassword;
+                  });
+                },
+              ),
+            ),
+          ),
+        ),
+        // Remember me toggle
+        Row(
+          children: [
+            SizedBox(
+              width: 24,
+              height: 24,
+              child: Checkbox(
+                value: _rememberMe,
+                onChanged: (value) => _toggleRememberMe(value ?? false),
+                activeColor: AppTheme.accent,
+                side: BorderSide(color: AppTheme.line, width: 1.5),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+              ),
+            ),
+            const SizedBox(width: 8),
+            GestureDetector(
+              onTap: () => _toggleRememberMe(!_rememberMe),
+              child: Text(
+                'Activar inicio rápido',
+                style: GoogleFonts.nunito(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.fg,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+
+        // Biometric login button (if available and credentials saved)
+        if (_canCheckBiometrics && _hasSavedCredentials)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: GestureDetector(
+              onTap: _isLoading ? null : _handleBiometricLogin,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppTheme.accent, width: 2),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.fingerprint,
+                      color: AppTheme.accent,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Ingresar con $_biometricLabel',
+                      style: GoogleFonts.fredoka(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w900,
+                        color: AppTheme.accent,
+                        letterSpacing: 0.1,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+        GestureDetector(
+          onTap: _isLoading ? null : _handleLogin,
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            decoration: BoxDecoration(
+              color: _isLoading ? AppTheme.muted : AppTheme.accent,
+              borderRadius: BorderRadius.circular(10),
+              boxShadow: [
+                BoxShadow(
+                  color: AppTheme.accentDark,
+                  offset: const Offset(0, 4),
+                  blurRadius: 0,
+                ),
+              ],
+            ),
+            child: _isLoading
+                ? const Center(
+                    child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                        color: AppTheme.paper,
+                      ),
+                    ),
+                  )
+                : Text(
+                    'Iniciar sesión',
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.fredoka(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w900,
+                      color: AppTheme.paper,
+                      letterSpacing: 0.1,
+                    ),
+                  ),
+          ),
+        ),
+        const SizedBox(height: 14),
+      ],
+    );
+  }
+
+  Widget _buildSignUpForm() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              _showSignIn ? 'Entrar como' : 'Registrarse como',
+              style: GoogleFonts.nunito(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: AppTheme.fg,
+              ),
+            ),
+            const SizedBox(width: 6),
+            GestureDetector(
+              onTap: () => _showRolesExplanation(context),
+              child: Container(
+                width: 18,
+                height: 18,
+                decoration: BoxDecoration(
+                  color: AppTheme.accentDim,
+                  shape: BoxShape.circle,
+                ),
+                child: Center(
+                  child: Text(
+                    '?',
+                    style: GoogleFonts.fredoka(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: AppTheme.accent,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: _buildRoleCard(
+                'customer',
+                'Cliente',
+                imagePath: 'assets/images/bebe/bebe-user.png',
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _buildRoleCard(
+                'usuario',
+                'Agente',
+                imagePath: 'assets/images/bebe/finanzas-bebe.png',
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _buildRoleCard(
+                'estudiante',
+                'Estudiante',
+                imagePath: 'assets/images/bebe/academy.png',
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Text(
+          'Nombre completo',
+          style: GoogleFonts.nunito(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: AppTheme.fg,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            border: Border.all(color: AppTheme.line, width: 1),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: TextField(
+            controller: _nameController,
+            style: GoogleFonts.nunito(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: AppTheme.fg,
+            ),
+            decoration: InputDecoration(
+              hintText: 'Tu nombre',
+              hintStyle: GoogleFonts.nunito(
+                fontSize: 13,
+                fontWeight: FontWeight.w400,
+                color: AppTheme.muted,
+              ),
+              border: InputBorder.none,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 12,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        Text(
+          'Email',
+          style: GoogleFonts.nunito(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: AppTheme.fg,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            border: Border.all(color: AppTheme.line, width: 1),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: TextField(
+            controller: _emailController,
+            keyboardType: TextInputType.emailAddress,
+            style: GoogleFonts.nunito(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: AppTheme.fg,
+            ),
+            decoration: InputDecoration(
+              hintText: 'tú@ejemplo.com',
+              hintStyle: GoogleFonts.nunito(
+                fontSize: 13,
+                fontWeight: FontWeight.w400,
+                color: AppTheme.muted,
+              ),
+              border: InputBorder.none,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 12,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        Text(
+          'WhatsApp',
+          style: GoogleFonts.nunito(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: AppTheme.fg,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            border: Border.all(color: AppTheme.line, width: 1),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: TextField(
+            controller: _phoneController,
+            keyboardType: TextInputType.phone,
+            style: GoogleFonts.nunito(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: AppTheme.fg,
+            ),
+            decoration: InputDecoration(
+              hintText: '+1 (555) 123-4567',
+              hintStyle: GoogleFonts.nunito(
+                fontSize: 13,
+                fontWeight: FontWeight.w400,
+                color: AppTheme.muted,
+              ),
+              border: InputBorder.none,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 12,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        Text(
+          'Contraseña',
+          style: GoogleFonts.nunito(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: AppTheme.fg,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            border: Border.all(color: AppTheme.line, width: 1),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: TextField(
+            controller: _passwordController,
+            obscureText: _obscurePassword,
+            style: GoogleFonts.nunito(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: AppTheme.fg,
+            ),
+            decoration: InputDecoration(
+              hintText: '••••••••',
+              hintStyle: GoogleFonts.nunito(
+                fontSize: 13,
+                fontWeight: FontWeight.w400,
+                color: AppTheme.muted,
+              ),
+              border: InputBorder.none,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 12,
+              ),
+              suffixIcon: IconButton(
+                icon: Icon(
+                  _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                  color: AppTheme.muted,
+                  size: 20,
+                ),
+                onPressed: () {
+                  setState(() {
+                    _obscurePassword = !_obscurePassword;
+                  });
+                },
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 18),
+        GestureDetector(
+          onTap: _isLoading ? null : _handleRegister,
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            decoration: BoxDecoration(
+              color: _isLoading ? AppTheme.muted : AppTheme.accent,
+              borderRadius: BorderRadius.circular(10),
+              boxShadow: [
+                BoxShadow(
+                  color: AppTheme.accentDark,
+                  offset: const Offset(0, 4),
+                  blurRadius: 0,
+                ),
+              ],
+            ),
+            child: _isLoading
+                ? const Center(
+                    child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                        color: AppTheme.paper,
+                      ),
+                    ),
+                  )
+                : Text(
+                    'Crear cuenta y continuar',
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.fredoka(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w900,
+                      color: AppTheme.paper,
+                      letterSpacing: 0.1,
+                    ),
+                  ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _handleLogin() async {
+    final email = _emailController.text.trim();
+    final password = _passwordController.text;
+
+    if (email.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Por favor ingresa email y contraseña')),
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      await AuthService.login(email: email, password: password);
+
+      if (!mounted) return;
+
+      // Siempre obtener datos frescos del usuario autenticado
+      debugPrint('🟡 [Login] Obteniendo datos del usuario desde /api/auth/me...');
+      final me = await AuthService.fetchMe();
+      debugPrint('🟢 [Login] fetchMe respondió: $me');
+
+      // Extraer nombre
+      final userName = (me['name'] as String?) ??
+          (me['user'] is Map ? me['user']['name'] as String? : null) ??
+          'Usuario';
+
+      // Extraer rol de forma robusta (top-level o anidado)
+      String? rawRole;
+      if (me.containsKey('role')) {
+        rawRole = me['role'] as String?;
+      } else if (me['user'] is Map && (me['user'] as Map).containsKey('role')) {
+        rawRole = me['user']['role'] as String?;
+      }
+
+      // Normalizar rol: manejar español del backend → inglés esperado
+      String role;
+      switch (rawRole?.toLowerCase()) {
+        case 'seller':
+        case 'usuario':
+        case 'vendedor':
+          role = 'seller';
+          break;
+        case 'student':
+        case 'estudiante':
+          role = 'student';
+          break;
+        case 'client':
+        case 'customer':
+        case 'cliente':
+          role = 'client';
+          break;
+        default:
+          // Fallback al rol guardado durante login
+          role = await AuthService.getBackendRole() ?? 'client';
+      }
+
+      debugPrint('📛 [Login] Rol detectado: rawRole=$rawRole → normalizedRole=$role');
+
+      if (!mounted) return;
+
+      // Guardar credenciales si el usuario activó inicio rápido
+      if (_rememberMe) {
+        await BiometricAuthService.saveCredentials(
+          email: email,
+          password: password,
+        );
+        await BiometricAuthService.setQuickStartEnabled(true);
+        debugPrint('🔐 Inicio rápido activado: credenciales guardadas');
+      } else {
+        await BiometricAuthService.clearCredentials();
+        await BiometricAuthService.setQuickStartEnabled(false);
+      }
+
+      await BiometricAuthService.clearExplicitLogout();
+
+      // Navegación según el rol real del usuario
+      if (role == 'seller') {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const VendorDashboardPage()),
+        );
+      } else if (role == 'student') {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => StudentHomePage(userName: userName),
+          ),
+        );
+      } else {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => UserHomePage(userName: userName),
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      _showErrorSnackBar(_friendlyErrorMessage(e));
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _toggleRememberMe(bool value) async {
+    if (value) {
+      if (_canCheckBiometrics) {
+        final biometrics = await BiometricAuthService.getAvailableBiometrics();
+        if (biometrics.isEmpty) {
+          if (!mounted) return;
+          await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              backgroundColor: AppTheme.paper,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              title: Text(
+                'Configurar $_biometricLabel',
+                style: GoogleFonts.fredoka(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: AppTheme.fg,
+                ),
+              ),
+              content: Text(
+                'Para usar inicio rápido, primero debes configurar $_biometricLabel en los ajustes de tu dispositivo.',
+                style: GoogleFonts.nunito(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: AppTheme.muted,
+                  height: 1.4,
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(false),
+                  child: Text(
+                    'AHORA NO',
+                    style: GoogleFonts.nunito(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: AppTheme.muted,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  child: Text(
+                    'ENTENDIDO',
+                    style: GoogleFonts.nunito(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: AppTheme.accent,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+          return;
+        }
+
+        final authStatus = await BiometricAuthService.authenticateDetailed();
+        if (authStatus != BiometricAuthStatus.success) {
+          if (!mounted) return;
+
+          if (authStatus == BiometricAuthStatus.permissionDenied) {
+            final shouldOpen = await showDialog<bool>(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                backgroundColor: AppTheme.paper,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                title: Text(
+                  'Permiso de $_biometricLabel',
+                  style: GoogleFonts.fredoka(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                    color: AppTheme.fg,
+                  ),
+                ),
+                content: Text(
+                  'Para activar inicio rápido, debes permitir el acceso a $_biometricLabel. Ve a ajustes y activa el permiso.',
+                  style: GoogleFonts.nunito(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: AppTheme.muted,
+                    height: 1.4,
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(false),
+                    child: Text(
+                      'AHORA NO',
+                      style: GoogleFonts.nunito(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.muted,
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(true),
+                    child: Text(
+                      'ABRIR AJUSTES',
+                      style: GoogleFonts.nunito(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.accent,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+            if (shouldOpen == true) {
+              await openAppSettings();
+            }
+            return;
+          }
+
+          final errorMsg = switch (authStatus) {
+            BiometricAuthStatus.cancelled => 'Debes autenticarte con ${_biometricLabel.toLowerCase()} para activar inicio rápido.',
+            BiometricAuthStatus.notAvailable => 'No hay ${_biometricLabel.toLowerCase()} configurada en el dispositivo.',
+            BiometricAuthStatus.error => 'Error al autenticar. Revisa los ajustes de ${_biometricLabel.toLowerCase()} e intenta de nuevo.',
+            _ => 'Error de autenticación.',
+          };
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(errorMsg),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
+      }
+
+      await BiometricAuthService.setQuickStartEnabled(true);
+    } else {
+      await BiometricAuthService.setQuickStartEnabled(false);
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      _rememberMe = value;
+      if (!_rememberMe) {
+        _hasSavedCredentials = false;
+      }
+    });
+  }
+
+  Future<void> _handleBiometricLogin() async {
+    debugPrint('🔐 [Biometric] Solicitando autenticación biométrica...');
+
+    final didAuthenticate = await BiometricAuthService.authenticate();
+    if (!didAuthenticate) {
+      debugPrint('⛔ [Biometric] Autenticación cancelada o fallida');
+      return;
+    }
+
+    final savedEmail = await BiometricAuthService.getSavedEmail();
+    final savedPassword = await BiometricAuthService.getSavedPassword();
+
+    if (savedEmail == null || savedPassword == null || savedEmail.isEmpty || savedPassword.isEmpty) {
+      debugPrint('❌ [Biometric] No hay credenciales guardadas');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No hay credenciales guardadas. Inicia sesión manualmente.')),
+        );
+      }
+      return;
+    }
+
+    // Autocompletar campos
+    _emailController.text = savedEmail;
+    _passwordController.text = savedPassword;
+
+    // Ejecutar login con las credenciales guardadas
+    debugPrint('🟢 [Biometric] Autenticación exitosa, procediendo a login automático...');
+    await _handleLogin();
+  }
+
+  Future<void> _handleRegister() async {
+    final name = _nameController.text.trim();
+    final email = _emailController.text.trim();
+    final phone = _phoneController.text.trim();
+    final password = _passwordController.text;
+
+    if (name.isEmpty || email.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Por favor completa todos los campos')),
+      );
+      return;
+    }
+
+    final phoneDigits = phone.replaceAll(RegExp(r'\D'), '');
+    if (phone.isNotEmpty && phoneDigits.length < 10) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('El teléfono debe tener al menos 10 dígitos')),
+      );
+      return;
+    }
+
+    final emailRegex = RegExp(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$');
+    if (!emailRegex.hasMatch(email)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ingresa una dirección de correo válida')),
+      );
+      return;
+    }
+
+    if (password.length < 6) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('La contraseña debe tener al menos 6 caracteres')),
+      );
+      return;
+    }
+
+    if (!password.contains(RegExp(r'[A-Z]'))) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('La contraseña debe contener al menos una mayúscula')),
+      );
+      return;
+    }
+
+    if (!password.contains(RegExp(r'[a-z]'))) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('La contraseña debe contener al menos una minúscula')),
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      await AuthService.register(
+        name: name,
+        email: email,
+        password: password,
+        phone: phone,
+        uiRole: _selectedRole,
+      );
+
+      if (!mounted) return;
+
+      // Limpiar sesión para que el usuario inicie sesión manualmente
+      await AuthService.logout();
+
+      if (!mounted) return;
+
+      await showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
+          backgroundColor: AppTheme.paper,
+          content: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 72,
+                  height: 72,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: AppTheme.accent.withValues(alpha: 0.15),
+                  ),
+                  child: Icon(
+                    Icons.check_circle_rounded,
+                    color: AppTheme.accent,
+                    size: 48,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  '¡Cuenta creada con éxito!',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.fredoka(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                    color: AppTheme.fg,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Ahora inicia sesión con tus credenciales para acceder a todos los beneficios.',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.nunito(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: AppTheme.muted,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 28),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.of(ctx).pop(),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.accent,
+                      foregroundColor: AppTheme.paper,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: Text(
+                      'Ir a iniciar sesión',
+                      style: GoogleFonts.fredoka(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+
+      if (!mounted) return;
+      setState(() => _showSignIn = true);
+    } catch (e) {
+      if (!mounted) return;
+      _showErrorSnackBar(_friendlyErrorMessage(e));
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Widget _buildRoleCard(
+    String id,
+    String title, {
+    IconData? icon,
+    String? imagePath,
+  }) {
+    final isSelected = _selectedRole == id;
+
+    return GestureDetector(
+      onTap: () => setState(() => _selectedRole = id),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: isSelected ? AppTheme.accentDim : AppTheme.paper,
+          border: Border.all(
+            color: isSelected ? AppTheme.accent : AppTheme.line,
+            width: 2,
+          ),
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: isSelected
+              ? [
+                  BoxShadow(
+                    color: AppTheme.accent.withValues(alpha: 0.3),
+                    blurRadius: 8,
+                    spreadRadius: 1,
+                    offset: const Offset(0, 3),
+                  ),
+                ]
+              : [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.08),
+                    blurRadius: 4,
+                    spreadRadius: 0,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            imagePath != null
+                ? Image.asset(
+                    imagePath,
+                    width: 72,
+                    height: 72,
+                    fit: BoxFit.contain,
+                  )
+                : Container(
+                    width: 72,
+                    height: 72,
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? AppTheme.accent.withValues(alpha: 0.15)
+                          : AppTheme.surface,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Center(
+                      child: Icon(
+                        icon ?? Icons.person,
+                        size: 32,
+                        color: isSelected ? AppTheme.accent : AppTheme.muted,
+                      ),
+                    ),
+                  ),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: GoogleFonts.fredoka(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: isSelected ? AppTheme.accent : AppTheme.fg,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+void _showRolesExplanation(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(24),
+        decoration: const BoxDecoration(
+          color: AppTheme.paper,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppTheme.line,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              '¿Quién eres?',
+              style: GoogleFonts.fredoka(
+                fontSize: 22,
+                fontWeight: FontWeight.w800,
+                color: AppTheme.fg,
+              ),
+            ),
+            const SizedBox(height: 24),
+            _buildRoleExplanation('👤', 'CLIENTE', 'Ya tienes una póliza con nosotros. Accede a tus beneficios y cobertura directamente.'),
+            const SizedBox(height: 16),
+            _buildRoleExplanation('💼', 'USUARIO', 'Agente o vendedor registrado. Gestiona tus ventas, comisiones y cartera de clientes.'),
+            const SizedBox(height: 16),
+            _buildRoleExplanation('🎓', 'ESTUDIANTE', 'Participante de nuestros programas educativos y de formación.'),
+            const SizedBox(height: 24),
+            GestureDetector(
+              onTap: () => Navigator.pop(context),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                decoration: BoxDecoration(
+                  color: AppTheme.accent,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  'Entendido',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.fredoka(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.paper,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRoleExplanation(String emoji, String title, String description) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(emoji, style: const TextStyle(fontSize: 28)),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: GoogleFonts.fredoka(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.accent,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                description,
+                style: GoogleFonts.nunito(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w400,
+                  color: AppTheme.fg,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
