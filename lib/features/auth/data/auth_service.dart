@@ -87,7 +87,6 @@ class AuthService {
         debugPrint('│ 🟢 LOGOUT RESPONSE');
         debugPrint('├──────────────────────────────────────────');
         debugPrint('│ STATUS CODE: ${response.statusCode}');
-        debugPrint('│ BODY: ${response.body}');
         debugPrint('└──────────────────────────────────────────');
       } catch (e) {
         debugPrint('┌──────────────────────────────────────────');
@@ -167,7 +166,6 @@ class AuthService {
     debugPrint('│ URL: $url');
     debugPrint('│ METHOD: POST');
     debugPrint('│ HEADERS: {Content-Type: application/json}');
-    debugPrint('│ BODY: $body');
     debugPrint('└──────────────────────────────────────────');
 
     final response = await http.post(
@@ -181,7 +179,6 @@ class AuthService {
     debugPrint('│ 🟢 REGISTER RESPONSE');
     debugPrint('├──────────────────────────────────────────');
     debugPrint('│ STATUS CODE: ${response.statusCode}');
-    debugPrint('│ BODY: $responseBody');
     debugPrint('└──────────────────────────────────────────');
 
     final responseData = jsonDecode(responseBody) as Map<String, dynamic>;
@@ -222,7 +219,6 @@ class AuthService {
     debugPrint('│ URL: $url');
     debugPrint('│ METHOD: POST');
     debugPrint('│ HEADERS: {Content-Type: application/json}');
-    debugPrint('│ BODY: $body');
     debugPrint('└──────────────────────────────────────────');
 
     final response = await http.post(
@@ -236,7 +232,6 @@ class AuthService {
     debugPrint('│ 🟢 LOGIN RESPONSE');
     debugPrint('├──────────────────────────────────────────');
     debugPrint('│ STATUS CODE: ${response.statusCode}');
-    debugPrint('│ BODY: $responseBody');
     debugPrint('└──────────────────────────────────────────');
 
     final responseData = jsonDecode(responseBody) as Map<String, dynamic>;
@@ -286,7 +281,6 @@ class AuthService {
     debugPrint('│ 🟢 FETCH ME RESPONSE');
     debugPrint('├──────────────────────────────────────────');
     debugPrint('│ STATUS CODE: ${response.statusCode}');
-    debugPrint('│ BODY: $responseBody');
     debugPrint('└──────────────────────────────────────────');
 
     final responseData = jsonDecode(responseBody) as Map<String, dynamic>;
@@ -321,7 +315,6 @@ class AuthService {
     debugPrint('├──────────────────────────────────────────');
     debugPrint('│ URL: $url');
     debugPrint('│ METHOD: POST');
-    debugPrint('│ BODY: $body');
     debugPrint('└──────────────────────────────────────────');
 
     final response = await http.post(
@@ -339,7 +332,6 @@ class AuthService {
     debugPrint('│ 🟢 REQUEST PRODUCT INFO RESPONSE');
     debugPrint('├──────────────────────────────────────────');
     debugPrint('│ STATUS CODE: ${response.statusCode}');
-    debugPrint('│ BODY: $responseBody');
     debugPrint('└──────────────────────────────────────────');
 
     final responseData = jsonDecode(responseBody) as Map<String, dynamic>;
